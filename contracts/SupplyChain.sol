@@ -11,6 +11,8 @@ contract SupplyChain is AccessControl {
 
     DrugRegistry public drugRegistry;
 
+    bytes32 public constant MANUFACTURER_ROLE = keccak256("MANUFACTURER_ROLE");
+
     struct Batch {
         uint256 id;
         uint256 drugId;
@@ -46,14 +48,12 @@ contract SupplyChain is AccessControl {
     event BatchTransferred(
         uint256 indexed batchId,
         address indexed from,
-        address indexed to
+        address indexed to,
+        string location,
+        uint256 temperature
     );
 
-    event TemperatureUpdated(
-        uint256 indexed batchId,
-        uint256 temperature,
-        string location
-    );
+    event BatchDeactivated(uint256 indexed batchId, address indexed admin);
 
     constructor(address _drugRegistry) {
         drugRegistry = DrugRegistry(_drugRegistry);
@@ -63,10 +63,12 @@ contract SupplyChain is AccessControl {
     function createBatch(
         uint256 _drugId,
         uint256 _quantity,
-        string memory _location
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) returns (uint256) {
+        string memory _location,
+        uint256 _temperature
+    ) external onlyRole(MANUFACTURER_ROLE) returns (uint256) {
         require(_quantity > 0, "Quantity must be greater than 0");
-        
+        require(drugRegistry.getDrugCount() >= _drugId, "Invalid drug ID");
+
         _batchIds.increment();
         uint256 newBatchId = _batchIds.current();
 
@@ -78,7 +80,7 @@ contract SupplyChain is AccessControl {
             currentHolder: msg.sender,
             timestamp: block.timestamp,
             location: _location,
-            temperature: 0,
+            temperature: _temperature,
             isActive: true
         });
 
@@ -94,60 +96,49 @@ contract SupplyChain is AccessControl {
         string memory _location,
         uint256 _temperature
     ) external {
-        require(_batchId > 0 && _batchId <= _batchIds.current(), "Invalid batch ID");
         require(_to != address(0), "Invalid recipient address");
-        
+        require(batches[_batchId].id == _batchId, "Batch does not exist");
+
         Batch storage batch = batches[_batchId];
         require(batch.isActive, "Batch is not active");
         require(batch.currentHolder == msg.sender, "Not the current holder");
 
-        batch.currentHolder = _to;
-        batch.timestamp = block.timestamp;
-        batch.location = _location;
-        batch.temperature = _temperature;
-
-        transferHistory[_batchId].push(Transfer({
+        Transfer memory transfer = Transfer({
             batchId: _batchId,
             from: msg.sender,
             to: _to,
             timestamp: block.timestamp,
             location: _location,
             temperature: _temperature
-        }));
+        });
 
-        emit BatchTransferred(_batchId, msg.sender, _to);
-        emit TemperatureUpdated(_batchId, _temperature, _location);
-    }
-
-    function updateTemperature(
-        uint256 _batchId,
-        uint256 _temperature,
-        string memory _location
-    ) external {
-        require(_batchId > 0 && _batchId <= _batchIds.current(), "Invalid batch ID");
-        
-        Batch storage batch = batches[_batchId];
-        require(batch.isActive, "Batch is not active");
-        require(batch.currentHolder == msg.sender, "Not the current holder");
-
-        batch.temperature = _temperature;
+        transferHistory[_batchId].push(transfer);
+        batch.currentHolder = _to;
         batch.location = _location;
+        batch.temperature = _temperature;
         batch.timestamp = block.timestamp;
 
-        emit TemperatureUpdated(_batchId, _temperature, _location);
+        emit BatchTransferred(_batchId, msg.sender, _to, _location, _temperature);
     }
 
-    function getBatch(uint256 _batchId) external view returns (Batch memory) {
-        require(_batchId > 0 && _batchId <= _batchIds.current(), "Invalid batch ID");
-        return batches[_batchId];
-    }
-
-    function getTransferHistory(uint256 _batchId) external view returns (Transfer[] memory) {
-        require(_batchId > 0 && _batchId <= _batchIds.current(), "Invalid batch ID");
+    function getBatchTransferHistory(uint256 _batchId)
+        external
+        view
+        returns (Transfer[] memory)
+    {
+        require(batches[_batchId].id == _batchId, "Batch does not exist");
         return transferHistory[_batchId];
     }
 
-    function getBatchCount(uint256 _drugId) external view returns (uint256) {
-        return batchCount[_drugId];
+    function deactivateBatch(uint256 _batchId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(batches[_batchId].id == _batchId, "Batch does not exist");
+        require(batches[_batchId].isActive, "Batch is already inactive");
+
+        batches[_batchId].isActive = false;
+        emit BatchDeactivated(_batchId, msg.sender);
     }
-} 
+
+    function getBatchCount() external view returns (uint256) {
+        return _batchIds.current();
+    }
+}

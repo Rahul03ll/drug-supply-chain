@@ -19,8 +19,15 @@ contract TemperatureMonitor is AccessControl {
         string resolution;
     }
 
+    struct BatchTemp {
+        uint256 minTemp;
+        uint256 maxTemp;
+        bool requiresControl;
+    }
+
     mapping(uint256 => TemperatureAlert[]) public temperatureAlerts;
     mapping(uint256 => uint256) public alertCount;
+    uint256 public totalActiveAlerts;
 
     event TemperatureAlertCreated(
         uint256 indexed batchId,
@@ -32,7 +39,9 @@ contract TemperatureMonitor is AccessControl {
     event TemperatureAlertResolved(
         uint256 indexed batchId,
         uint256 indexed drugId,
-        string resolution
+        uint256 indexed alertIndex,
+        string resolution,
+        address resolvedBy
     );
 
     constructor(address _drugRegistry, address _supplyChain) {
@@ -41,21 +50,30 @@ contract TemperatureMonitor is AccessControl {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
+    function _getDrugTempLimits(uint256 _drugId) internal view returns (BatchTemp memory) {
+        (bool exists, uint256 minTemp, uint256 maxTemp, bool requiresControl) = 
+            drugRegistry.getTemperatureLimits(_drugId);
+        
+        require(exists, "Drug does not exist");
+        return BatchTemp(minTemp, maxTemp, requiresControl);
+    }
+
     function checkTemperature(
         uint256 _batchId,
         uint256 _temperature,
         string memory _location
     ) external {
         require(_batchId > 0, "Invalid batch ID");
-        
-        SupplyChain.Batch memory batch = supplyChain.getBatch(_batchId);
-        DrugRegistry.Drug memory drug = drugRegistry.getDrug(batch.drugId);
+        (uint256 id, uint256 drugId, ,,,,,, bool isActive) = supplyChain.batches(_batchId);
+        require(id == _batchId && isActive, "Batch does not exist");
 
-        if (drug.requiresTemperatureControl) {
-            if (_temperature < drug.minTemperature || _temperature > drug.maxTemperature) {
+        BatchTemp memory tempLimits = _getDrugTempLimits(drugId);
+
+        if (tempLimits.requiresControl) {
+            if (_temperature < tempLimits.minTemp || _temperature > tempLimits.maxTemp) {
                 TemperatureAlert memory alert = TemperatureAlert({
                     batchId: _batchId,
-                    drugId: batch.drugId,
+                    drugId: drugId,
                     temperature: _temperature,
                     timestamp: block.timestamp,
                     location: _location,
@@ -65,8 +83,9 @@ contract TemperatureMonitor is AccessControl {
 
                 temperatureAlerts[_batchId].push(alert);
                 alertCount[_batchId]++;
+                totalActiveAlerts++;
 
-                emit TemperatureAlertCreated(_batchId, batch.drugId, _temperature, _location);
+                emit TemperatureAlertCreated(_batchId, drugId, _temperature, _location);
             }
         }
     }
@@ -78,14 +97,15 @@ contract TemperatureMonitor is AccessControl {
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_batchId > 0, "Invalid batch ID");
         require(_alertIndex < temperatureAlerts[_batchId].length, "Invalid alert index");
-        
+
         TemperatureAlert storage alert = temperatureAlerts[_batchId][_alertIndex];
         require(!alert.isResolved, "Alert already resolved");
 
         alert.isResolved = true;
         alert.resolution = _resolution;
+        totalActiveAlerts--;
 
-        emit TemperatureAlertResolved(_batchId, alert.drugId, _resolution);
+        emit TemperatureAlertResolved(_batchId, alert.drugId, _alertIndex, _resolution, msg.sender);
     }
 
     function getTemperatureAlerts(uint256 _batchId) 
@@ -102,16 +122,7 @@ contract TemperatureMonitor is AccessControl {
         return alertCount[_batchId];
     }
 
-    function isTemperatureInRange(
-        uint256 _drugId,
-        uint256 _temperature
-    ) external view returns (bool) {
-        DrugRegistry.Drug memory drug = drugRegistry.getDrug(_drugId);
-        
-        if (!drug.requiresTemperatureControl) {
-            return true;
-        }
-
-        return _temperature >= drug.minTemperature && _temperature <= drug.maxTemperature;
+    function getActiveAlerts() external view returns (uint256) {
+        return totalActiveAlerts;
     }
-} 
+}

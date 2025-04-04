@@ -44,7 +44,9 @@ function InventoryRow({ item }) {
   // Calculate if stock is low (less than 10 units)
   const isLowStock = item.quantity < 10;
   // Calculate if item is near expiry (within 30 days)
-  const daysToExpiry = Math.ceil((new Date(item.expiryDate) - new Date()) / (1000 * 60 * 60 * 24));
+  const daysToExpiry = item.expiryDate
+    ? Math.ceil((new Date(item.expiryDate) - new Date()) / (1000 * 60 * 60 * 24))
+    : Infinity; // Default to a large number if expiryDate is missing or invalid
   const isNearExpiry = daysToExpiry < 30;
 
   return (
@@ -84,13 +86,13 @@ function InventoryRow({ item }) {
         <TableCell>
           <Chip
             label={item.quantity}
-            color={isLowStock ? "warning" : "primary"}
+            sx={{ backgroundColor: isLowStock ? 'warning.main' : 'primary.main', color: '#fff' }}
           />
         </TableCell>
         <TableCell>
           <Chip
             label={`${daysToExpiry} days`}
-            color={isNearExpiry ? "error" : "success"}
+            sx={{ backgroundColor: isNearExpiry ? 'error.main' : 'success.main', color: '#fff' }}
           />
         </TableCell>
       </TableRow>
@@ -102,7 +104,7 @@ function InventoryRow({ item }) {
                 Product History
               </Typography>
               <Stepper orientation="vertical" sx={{ ml: 2 }}>
-                {item.path.map((step, index) => (
+                {item.path && item.path.map((step, index) => (
                   <Step key={index} active={true}>
                     <StepLabel
                       icon={
@@ -150,10 +152,13 @@ function RetailerDashboard() {
   const handleSale = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    
+
     try {
+      if (!saleForm.drugId || !saleForm.quantity || !saleForm.customerName || !saleForm.customerID) {
+        throw new Error('All fields are required');
+      }
+
       const selectedDrug = inventory.find(item => item.id === parseInt(saleForm.drugId));
-      
       if (!selectedDrug) {
         throw new Error('Selected drug not found in inventory');
       }
@@ -162,6 +167,7 @@ function RetailerDashboard() {
         throw new Error(`Insufficient quantity in inventory. Available: ${selectedDrug.quantity}`);
       }
 
+      // Proceed with sale
       const sale = {
         id: Date.now(),
         ...saleForm,
@@ -278,9 +284,17 @@ function RetailerDashboard() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {inventory.map((item) => (
-                    <InventoryRow key={item.id} item={item} />
-                  ))}
+                  {inventory.length > 0 ? (
+                    inventory.map((item) => (
+                      <InventoryRow key={item.id} item={item} />
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={5} align="center">
+                        No inventory available.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -360,4 +374,4 @@ function RetailerDashboard() {
   );
 }
 
-export default RetailerDashboard; 
+export default RetailerDashboard;
